@@ -13,6 +13,7 @@ import cors from "cors";
 import helmet from "helmet";
 import mongoose from "mongoose";
 import commentRoute from "./routes/commentRoutes";
+import contributorRoute from "./routes/contributorRoutes";
 import GptRoute from "./routes/GptRoute";
 import AiReview from "./routes/ai-review"; // Migrated to Gemini API
 const app: Application = express();
@@ -53,6 +54,9 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.use("/api/comment", commentRoute);
 app.use("/api/chatgpt", GptRoute);
+app.use("/api", contributorRoute);
+// app.use('/api', AiReview )         // Commented out: requires OPENAI_API_KEY
+// app.use('/api/github', AiReview )  // Commented out: requires OPENAI_API_KEY
 app.use("/api", AiReview); // AI code review (Gemini)
 app.use("/api/github", AiReview); // AI code review (Gemini)
 // 404 handler (must come after all other routes)
