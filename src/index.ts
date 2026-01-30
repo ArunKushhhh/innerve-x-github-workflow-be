@@ -1,5 +1,13 @@
 // src/index.ts
 import dotenv from "dotenv";
+import express, { Application, Request, Response, NextFunction } from "express";
+import cors from "cors";
+import helmet from "helmet";
+import mongoose from "mongoose";
+import commentRoute from "./routes/commentRoutes";
+import contributorRoute from "./routes/contributorRoutes";
+import GptRoute from "./routes/GptRoute";
+import AiReview from "./routes/ai-review"; // Migrated to Gemini API
 
 const envFile =
   process.env.NODE_ENV === "production"
@@ -8,15 +16,6 @@ const envFile =
 dotenv.config();
 console.log(`🔧 Loaded environment from ${envFile}`);
 
-import express, { Application, Request, Response, NextFunction } from "express";
-import cors from "cors";
-import helmet from "helmet";
-import mongoose from "mongoose";
-import commentRoute from "./routes/commentRoutes";
-import GptRoute from "./routes/GptRoute";
-import AiReview from "./routes/ai-review"; // Migrated to Gemini API
-import contributorRoute from "./routes/contributorRoutes";
-// import AiReview from "./routes/ai-review"  // Commented out: requires OPENAI_API_KEY
 const app: Application = express();
 
 app.use(helmet());
@@ -55,11 +54,9 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.use("/api/comment", commentRoute);
 app.use("/api/chatgpt", GptRoute);
+app.use("/api", contributorRoute); // Contributor routes
 app.use("/api", AiReview); // AI code review (Gemini)
 app.use("/api/github", AiReview); // AI code review (Gemini)
-app.use("/api", contributorRoute);
-// app.use('/api', AiReview )         // Commented out: requires OPENAI_API_KEY
-// app.use('/api/github', AiReview )  // Commented out: requires OPENAI_API_KEY
 // 404 handler (must come after all other routes)
 app.use((_req: Request, res: Response) => {
   res.status(404).json({
