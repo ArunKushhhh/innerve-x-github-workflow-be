@@ -14,6 +14,7 @@ import helmet from "helmet";
 import mongoose from "mongoose";
 import commentRoute from "./routes/commentRoutes";
 import GptRoute from "./routes/GptRoute";
+import contributorRoute from "./routes/contributorRoutes";
 // import AiReview from "./routes/ai-review"  // Commented out: requires OPENAI_API_KEY
 const app: Application = express();
 
@@ -52,6 +53,7 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.use("/api/comment", commentRoute);
 app.use("/api/chatgpt", GptRoute);
+app.use("/api", contributorRoute);
 // app.use('/api', AiReview )         // Commented out: requires OPENAI_API_KEY
 // app.use('/api/github', AiReview )  // Commented out: requires OPENAI_API_KEY
 // 404 handler (must come after all other routes)
