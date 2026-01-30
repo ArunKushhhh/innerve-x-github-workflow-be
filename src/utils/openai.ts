@@ -1,9 +1,9 @@
 // src/utils/openai.ts
 // ============================================
-// COMMENTED OUT: OpenAI API key not configured
+// Migrated to Gemini API
 // ============================================
 
-// import OpenAI from "openai"
+import { getCodeReviewModel, cleanJsonResponse } from "./gemini";
 
 export interface ReviewCodeParams {
   code: string;
@@ -13,37 +13,25 @@ export interface ReviewCodeResponse {
   reply: string;
 }
 
-// const openai = new OpenAI({
-//   apiKey: process.env.OPENAI_API_KEY,            // must be a *secret* "sk-" key
-// })
-
 export async function reviewCodeWithAI(
   params: ReviewCodeParams,
 ): Promise<ReviewCodeResponse> {
-  // COMMENTED OUT: OpenAI API key not configured
-  // const completion = await openai.chat.completions.create({
-  //   model: "gpt-4o-mini",
-  //   messages: [
-  //     {
-  //       role: "system",
-  //       content:
-  //         "You are an AI coding assistant. When given a coding question, respond with ONLY the complete, working C++ code solution. Do not include explanations or comments.",
-  //     },
-  //     {
-  //       role: "user",
-  //       content:
-  //         `I'm currently in a live coding assessment/interview. Problem:\n\n${params.code}`,
-  //     },
-  //   ],
-  //   temperature: 0.2,
-  //   max_tokens: 800,
-  // })
+  const model = getCodeReviewModel(
+    "You are an AI coding assistant. When given a coding question, respond with ONLY the complete, working code solution. Do not include explanations or comments unless specifically asked.",
+  );
 
-  // const reply = completion.choices?.[0]?.message?.content?.trim() ?? ""
-  // return { reply }
+  const prompt = `I'm currently in a live coding assessment/interview. Problem:\n\n${params.code}`;
 
-  // Return placeholder response
-  return {
-    reply: "OpenAI API is currently disabled. Please configure OPENAI_API_KEY.",
-  };
+  try {
+    const result = await model.generateContent(prompt);
+    const reply = result.response.text().trim();
+
+    console.log("🤖 Gemini code review completed");
+    return { reply };
+  } catch (error: any) {
+    console.error("❌ Gemini code review failed:", error.message);
+    return {
+      reply: "AI analysis failed. Please try again.",
+    };
+  }
 }

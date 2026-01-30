@@ -1,7 +1,6 @@
-// src/utils/openai.ts
-import OpenAI from "openai";
-
-const openai = new OpenAI();
+// src/utils/githubcodereview.ts
+// Migrated from OpenAI to Gemini API
+import { getCodeReviewModel, cleanJsonResponse } from "./gemini";
 
 export interface GitHubReviewParams {
   /** The unified diff text from a GitHub pull request */
@@ -11,16 +10,11 @@ export interface GitHubReviewParams {
 export interface GitHubReviewResponse {
   /** AI's review commentary suitable for posting on GitHub */
   review: string;
-  /** Raw OpenAI response for debugging */
+  /** Raw Gemini response for debugging */
   raw: any;
 }
-export async function reviewCodeForGitHub(
-  params: GitHubReviewParams
-): Promise<GitHubReviewResponse> {
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    {
-      role: "system" as const,
-      content: `You are an expert senior software engineer conducting a thorough code review. Analyze the provided git diff and identify meaningful issues that would improve code quality, security, performance, or maintainability.
+
+const SYSTEM_INSTRUCTION = `You are an expert senior software engineer conducting a thorough code review. Analyze the provided git diff and identify meaningful issues that would improve code quality, security, performance, or maintainability.
 
 🎯 **FOCUS AREAS:**
 - **Security vulnerabilities** (SQL injection, XSS, authentication flaws, data exposure)
@@ -60,53 +54,37 @@ Return ONLY a valid JSON array without any markdown formatting or code blocks. E
   }
 ]
 
-IMPORTANT: Return ONLY the JSON array, no markdown code blocks, no explanatory text. Return empty array [] if no meaningful issues found.`
-    },
-    {
-      role: "user" as const,
-      content: `Please conduct a thorough code review of this diff. Focus on security, performance, bugs, and maintainability issues:
+IMPORTANT: Return ONLY the JSON array, no markdown code blocks, no explanatory text. Return empty array [] if no meaningful issues found.`;
+
+export async function reviewCodeForGitHub(
+  params: GitHubReviewParams,
+): Promise<GitHubReviewResponse> {
+  const model = getCodeReviewModel(SYSTEM_INSTRUCTION);
+
+  const prompt = `Please conduct a thorough code review of this diff. Focus on security, performance, bugs, and maintainability issues:
 
 \`\`\`diff
 ${params.diff}
-\`\`\``
-    }
-  ];
+\`\`\``;
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages,
-    temperature: 0.2,
-    max_tokens: 2000,
-    top_p: 0.9,
-  });
+  const result = await model.generateContent(prompt);
+  const response = result.response;
+  const rawReview = response.text().trim();
 
-  console.log("🤖 OpenAI review request completed");
+  console.log("🤖 Gemini review request completed");
 
-  const rawReview = completion.choices?.[0]?.message?.content?.trim() ?? "";
-  
   // Enhanced debug logging
   console.log("🔍 AI Response length:", rawReview.length);
   console.log("🔍 AI Response preview:", rawReview.substring(0, 200) + "...");
-  
-  // Clean the response - remove markdown code blocks if present
-  let cleanedReview = rawReview;
-  
-  // Remove ```json at the start and ``` at the end
-  if (cleanedReview.startsWith('```json')) {
-    cleanedReview = cleanedReview.replace(/^```json\s*/, '');
-  }
-  if (cleanedReview.startsWith('```')) {
-    cleanedReview = cleanedReview.replace(/^```\s*/, '');
-  }
-  if (cleanedReview.endsWith('```')) {
-    cleanedReview = cleanedReview.replace(/\s*```$/, '');
-  }
-  
-  // Trim any remaining whitespace
-  cleanedReview = cleanedReview.trim();
-  
-  console.log("🧹 Cleaned response preview:", cleanedReview.substring(0, 200) + "...");
-  
+
+  // Clean the response
+  const cleanedReview = cleanJsonResponse(rawReview);
+
+  console.log(
+    "🧹 Cleaned response preview:",
+    cleanedReview.substring(0, 200) + "...",
+  );
+
   // Validate JSON format
   try {
     const parsed = JSON.parse(cleanedReview);
@@ -117,11 +95,14 @@ ${params.diff}
       console.log(`✅ AI returned ${parsed.length} suggestions`);
     }
   } catch (e) {
-    console.error("❌ AI returned invalid JSON after cleaning:", cleanedReview.substring(0, 500));
+    console.error(
+      "❌ AI returned invalid JSON after cleaning:",
+      cleanedReview.substring(0, 500),
+    );
     console.error("❌ Parse error:", e);
     // Return empty array as fallback
-    return { review: "[]", raw: completion };
+    return { review: "[]", raw: response };
   }
 
-  return { review: cleanedReview, raw: completion };
+  return { review: cleanedReview, raw: response };
 }

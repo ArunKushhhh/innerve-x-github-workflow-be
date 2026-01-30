@@ -1,18 +1,20 @@
-// Add this to your routes file (e.g., routes/github.ts)
+// src/routes/ai-review.ts
+// AI-powered code review and analysis routes (using Gemini API)
 
 import { Router } from "express";
-// import { handleIssueLabelAssignment } from '../controllers/IssueLabelController';
 import { handleCodeReview } from "../controllers/AiReviewController";
 import { handleIssueAnalysis } from "../controllers/LabelController";
-// import { handlePRSummary } from '../controllers/GptController';  // COMMENTED OUT: OpenAI API key not configured
+import { handlePRSummary } from "../controllers/GptController";
+
 const router = Router();
 
-// Existing routes
+// AI code review endpoint
 router.post("/ai-review", handleCodeReview);
 
-// New comprehensive issue analysis route
+// Comprehensive issue analysis with AI scoring
 router.post("/analyze-issue", handleIssueAnalysis);
 
-// router.post('/generate-pr-summary', handlePRSummary);  // COMMENTED OUT: OpenAI API key not configured
+// Generate AI-powered PR summary
+router.post("/generate-pr-summary", handlePRSummary);
 
 export default router;
