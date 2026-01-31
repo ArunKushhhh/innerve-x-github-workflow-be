@@ -2,93 +2,212 @@ name: PullQuest AI Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
   issues:
     types: [opened]
+  issue_comment:
+    types: [created]
 
 jobs:
-  ai-review:
+  ai-automation:
     runs-on: ubuntu-latest
-    name: AI Review Trigger
+    name: PullQuest AI Automation
     steps:
-      - name: Trigger PullQuest Backend
+      - name: Handle PullQuest Events
         uses: actions/github-script@v6
         env:
-          BACKEND_URL: "https://innerve-x-github-workflow-be-xi.vercel.app/api/generate-pr-summary"
-          ISSUE_URL: "https://innerve-x-github-workflow-be-xi.vercel.app/api/comment/issues"
+          BACKEND_URL: "https://innerve-x-github-workflow-be-xi.vercel.app"
         with:
           script: |
             const eventType = context.eventName;
-            console.log(`🚀 Triggering PullQuest AI for event: ${eventType}`);
+            const baseUrl = process.env.BACKEND_URL;
 
+            console.log(`🚀 Processing event: ${eventType}`);
+
+            // =================================================================
+            // 1. PULL REQUEST EVENTS
+            // =================================================================
             if (eventType === 'pull_request') {
               const pr = context.payload.pull_request;
-              const backendUrl = process.env.BACKEND_URL;
+              const action = context.payload.action;
               
-              console.log(`📡 Sending PR #${pr.number} to ${backendUrl}`);
+              console.log(`📡 Processing PR #${pr.number} (Action: ${action})`);
 
-              try {
-                const response = await fetch(backendUrl, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
+              // A. PR OPENED: Deduct Stake + Generate Summary + AI Code Review
+              if (action === 'opened' || action === 'reopened') {
+                 
+                 // 1. Deduct Stake & Check Balance
+                 await callBackend(`${baseUrl}/api/comment/PullRequest`, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    prNumber: pr.number,
+                    author: pr.user.login,
+                    description: pr.body || '',
+                    labels: pr.labels ? pr.labels.map(l => l.name) : []
+                 });
+
+                 // 2. Generate PR Summary
+                 await callBackend(`${baseUrl}/api/generate-pr-summary`, {
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     prNumber: pr.number,
                     title: pr.title,
                     description: pr.body || '',
                     author: pr.user.login,
+                    diff: await getDiff(pr.diff_url),
                     metadata: {
                       createdAt: pr.created_at,
                       headBranch: pr.head.ref,
                       baseBranch: pr.base.ref
                     }
-                  })
-                });
-
-                if (!response.ok) {
-                  const text = await response.text();
-                  throw new Error(`API responded with ${response.status}: ${text}`);
-                }
-                
-                const data = await response.json();
-                console.log("✅ Success:", data);
-
-              } catch (error) {
-                console.error("❌ Failed to trigger PR summary:", error.message);
-                core.setFailed(error.message);
+                 });
+                 
+                 // 3. AI Code Review (Detailed Suggestions)
+                 // Wait a bit to avoid rate limits or race conditions
+                 await new Promise(r => setTimeout(r, 2000));
+                 await callBackend(`${baseUrl}/api/ai-review`, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    prNumber: pr.number,
+                    diff: await getDiff(pr.diff_url)
+                 });
+              }
+              
+              // B. PR SYNCHRONIZED (New Commits): Re-run AI Code Review + Update Summary
+              else if (action === 'synchronize') {
+                 console.log("🔄 PR updated, re-running analysis...");
+                 
+                 // Re-run Summary
+                 await callBackend(`${baseUrl}/api/generate-pr-summary`, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    prNumber: pr.number,
+                    title: pr.title,
+                    description: pr.body || '',
+                    author: pr.user.login,
+                    diff: await getDiff(pr.diff_url)
+                 });
+                 
+                 // Re-run Code Review
+                 await callBackend(`${baseUrl}/api/ai-review`, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    prNumber: pr.number,
+                    diff: await getDiff(pr.diff_url)
+                 });
               }
 
-            } else if (eventType === 'issues') {
-              const issue = context.payload.issue;
-              const issueUrl = process.env.ISSUE_URL;
-              
-              // Only trigger for newly opened issues to post the staking challenge
-              console.log(`📡 Sending Issue #${issue.number} to ${issueUrl}`);
+              // C. PR CLOSED/MERGED: Generate Merge Feedback Form
+              else if (action === 'closed') {
+                 // Trigger only if merged? Or closed too? Let's do both or just merged.
+                 // The backend 'formComment' endpoint generates a rating.
+                 await callBackend(`${baseUrl}/api/comment/form`, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    prNumber: pr.number,
+                    commenter: pr.user.login 
+                 });
+              }
+            }
 
-              try {
-                const response = await fetch(issueUrl, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
+            // =================================================================
+            // 2. ISSUE EVENTS
+            // =================================================================
+            else if (eventType === 'issues') {
+              const issue = context.payload.issue;
+              const action = context.payload.action;
+              
+              if (action === 'opened') {
+                console.log(`📡 Processing Issue #${issue.number}`);
+
+                // 1. Post Welcome/Staking Comment + AI Summary
+                await callBackend(`${baseUrl}/api/comment/issues`, {
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issueNumber: issue.number,
-                    labels: issue.labels ? issue.labels.map(l => l.name) : []
-                  })
+                    labels: issue.labels ? issue.labels.map(l => l.name) : [],
+                    title: issue.title,
+                    description: issue.body || ''
                 });
 
-                if (!response.ok) {
-                    // It's possible the backend expects a different payload or there's no labels yet.
-                    // But we log it.
-                    const text = await response.text();
-                    console.warn(`⚠️ Issue API responded with ${response.status}: ${text}`);
-                } else {
-                    const data = await response.json();
-                    console.log("✅ Success:", data);
-                }
-              } catch (error) {
-                console.error("❌ Failed to trigger Issue comment:", error.message);
-                // Don't fail the build for issue comments, as it might be non-critical
+                // 2. Comprehensive Issue Analysis (Auto-Labeling)
+                await callBackend(`${baseUrl}/api/analyze-issue`, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issueNumber: issue.number,
+                    addLabelsToPRs: false 
+                });
               }
+            }
+
+            // =================================================================
+            // 3. COMMENT EVENTS (ChatOps)
+            // =================================================================
+            else if (eventType === 'issue_comment') {
+                const comment = context.payload.comment;
+                const body = comment.body.trim();
+                
+                // Only process commands starting with @pullquestai
+                if (body.startsWith('@pullquestai')) {
+                    console.log(`💬 Processing command: ${body}`);
+                    
+                    // Regex for "add <amount> xp to @<user>"
+                    const xpMatch = body.match(/add\s+(\d+)\s+xp\s+to\s+@?([\w-]+)/i);
+                    
+                    if (xpMatch) {
+                        const amount = parseInt(xpMatch[1]);
+                        const targetUser = xpMatch[2];
+                        const issue = context.payload.issue; // Works for PRs too in this context
+                        
+                        console.log(`🎁 Bonus XP Command: ${amount} XP -> ${targetUser}`);
+                        
+                        await callBackend(`${baseUrl}/api/comment/XpAddition`, {
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            prNumber: issue.number,
+                            targetUser: targetUser,
+                            xpAmount: amount,
+                            requester: comment.user.login
+                        });
+                    }
+                }
+            }
+
+            // =================================================================
+            // HELPER FUNCTIONS
+            // =================================================================
+            async function callBackend(url, body) {
+              try {
+                console.log(`🌐 POST ${url}`);
+                const response = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(body)
+                });
+                
+                if (!response.ok) {
+                   const text = await response.text();
+                   console.warn(`⚠️ API Error (${response.status}): ${text}`);
+                } else {
+                   const data = await response.json();
+                   console.log("✅ Success");
+                }
+              } catch (e) {
+                console.error(`❌ Request Failed: ${e.message}`);
+              }
+            }
+
+            async function getDiff(diffUrl) {
+                if (!diffUrl) return "";
+                try {
+                    // Fetch diff using token if needed, or public if repo is public
+                    const response = await fetch(diffUrl, {
+                         headers: { 'Authorization': `token ${process.env.GITHUB_TOKEN}` } // Optional if public
+                    });
+                    if (response.ok) return await response.text();
+                    return "";
+                } catch (e) {
+                    console.warn("⚠️ Failed to fetch diff content");
+                    return "";
+                }
             }
