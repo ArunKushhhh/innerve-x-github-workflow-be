@@ -1,0 +1,94 @@
+name: PullQuest AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issues:
+    types: [opened]
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    name: AI Review Trigger
+    steps:
+      - name: Trigger PullQuest Backend
+        uses: actions/github-script@v6
+        env:
+          BACKEND_URL: "https://innerve-x-github-workflow-be-xi.vercel.app/api/generate-pr-summary"
+          ISSUE_URL: "https://innerve-x-github-workflow-be-xi.vercel.app/api/comment/issues"
+        with:
+          script: |
+            const eventType = context.eventName;
+            console.log(`🚀 Triggering PullQuest AI for event: ${eventType}`);
+
+            if (eventType === 'pull_request') {
+              const pr = context.payload.pull_request;
+              const backendUrl = process.env.BACKEND_URL;
+              
+              console.log(`📡 Sending PR #${pr.number} to ${backendUrl}`);
+
+              try {
+                const response = await fetch(backendUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    prNumber: pr.number,
+                    title: pr.title,
+                    description: pr.body || '',
+                    author: pr.user.login,
+                    metadata: {
+                      createdAt: pr.created_at,
+                      headBranch: pr.head.ref,
+                      baseBranch: pr.base.ref
+                    }
+                  })
+                });
+
+                if (!response.ok) {
+                  const text = await response.text();
+                  throw new Error(`API responded with ${response.status}: ${text}`);
+                }
+                
+                const data = await response.json();
+                console.log("✅ Success:", data);
+
+              } catch (error) {
+                console.error("❌ Failed to trigger PR summary:", error.message);
+                core.setFailed(error.message);
+              }
+
+            } else if (eventType === 'issues') {
+              const issue = context.payload.issue;
+              const issueUrl = process.env.ISSUE_URL;
+              
+              // Only trigger for newly opened issues to post the staking challenge
+              console.log(`📡 Sending Issue #${issue.number} to ${issueUrl}`);
+
+              try {
+                const response = await fetch(issueUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issueNumber: issue.number,
+                    labels: issue.labels ? issue.labels.map(l => l.name) : []
+                  })
+                });
+
+                if (!response.ok) {
+                    // It's possible the backend expects a different payload or there's no labels yet.
+                    // But we log it.
+                    const text = await response.text();
+                    console.warn(`⚠️ Issue API responded with ${response.status}: ${text}`);
+                } else {
+                    const data = await response.json();
+                    console.log("✅ Success:", data);
+                }
+              } catch (error) {
+                console.error("❌ Failed to trigger Issue comment:", error.message);
+                // Don't fail the build for issue comments, as it might be non-critical
+              }
+            }

@@ -5,18 +5,19 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 // src/index.ts
 const dotenv_1 = __importDefault(require("dotenv"));
-const envFile = process.env.NODE_ENV === "production"
-    ? ".env.production"
-    : ".env.development";
-dotenv_1.default.config({ path: envFile });
-console.log(`🔧 Loaded environment from ${envFile}`);
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const mongoose_1 = __importDefault(require("mongoose"));
 const commentRoutes_1 = __importDefault(require("./routes/commentRoutes"));
+const contributorRoutes_1 = __importDefault(require("./routes/contributorRoutes"));
 const GptRoute_1 = __importDefault(require("./routes/GptRoute"));
-const ai_review_1 = __importDefault(require("./routes/ai-review"));
+const ai_review_1 = __importDefault(require("./routes/ai-review")); // Migrated to Gemini API
+const envFile = process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
+dotenv_1.default.config();
+console.log(`🔧 Loaded environment from ${envFile}`);
 const app = (0, express_1.default)();
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)({
@@ -33,6 +34,7 @@ app.get("/", (_req, res) => {
         docs: [
             { path: "/health", desc: "Health check" },
             { path: "/api/comment/issues", desc: "POST → comment on PR/issue" },
+            { path: "/api/ai-review", desc: "POST → AI code review" },
         ],
     });
 });
@@ -44,10 +46,11 @@ app.get("/health", (_req, res) => {
         environment: process.env.NODE_ENV || "development",
     });
 });
-app.use('/api/comment', commentRoutes_1.default);
-app.use('/api/chatgpt', GptRoute_1.default);
-app.use('/api', ai_review_1.default);
-app.use('/api/github', ai_review_1.default);
+app.use("/api/comment", commentRoutes_1.default);
+app.use("/api/chatgpt", GptRoute_1.default);
+app.use("/api", contributorRoutes_1.default); // Contributor routes
+app.use("/api", ai_review_1.default); // AI code review (Gemini)
+app.use("/api/github", ai_review_1.default); // AI code review (Gemini)
 // 404 handler (must come after all other routes)
 app.use((_req, res) => {
     res.status(404).json({
@@ -60,7 +63,9 @@ app.use((err, _req, res, _next) => {
     console.error("Server Error:", err);
     res.status(500).json({
         error: "Internal server error",
-        message: process.env.NODE_ENV === "development" ? err.message : "Something went wrong",
+        message: process.env.NODE_ENV === "development"
+            ? err.message
+            : "Something went wrong",
     });
 });
 // ─── MongoDB connection ─────────────────────────────────────────────────

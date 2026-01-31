@@ -1,22 +1,36 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleIssueAnalysis = void 0;
-const openai_1 = __importDefault(require("openai"));
+const generative_ai_1 = require("@google/generative-ai");
+const gemini_1 = require("../utils/gemini");
 const handleIssueAnalysis = async (req, res) => {
     console.log("🔍 Starting comprehensive AI-powered issue analysis");
-    const { owner, repo, issueNumber, openaiApiKey, addLabelsToPRs = true } = req.body;
-    if (!owner || !repo || !issueNumber || !openaiApiKey) {
-        res.status(400).json({ error: "owner, repo, issueNumber, and openaiApiKey are required" });
+    const { owner, repo, issueNumber, geminiApiKey, addLabelsToPRs = true, } = req.body;
+    // Use provided API key or fall back to environment variable
+    const apiKey = geminiApiKey || process.env.GEMINI_API_KEY;
+    if (!owner || !repo || !issueNumber) {
+        res
+            .status(400)
+            .json({ error: "owner, repo, and issueNumber are required" });
+        return;
+    }
+    if (!apiKey) {
+        res.status(400).json({ error: "GEMINI_API_KEY not configured" });
         return;
     }
     try {
         console.log(`🎯 Analyzing issue #${issueNumber} in ${owner}/${repo}`);
         console.log(`🏷️ Add labels to PRs: ${addLabelsToPRs}`);
-        /* 1️⃣ Initialize OpenAI client */
-        const openai = new openai_1.default({ apiKey: openaiApiKey });
+        /* 1️⃣ Initialize Gemini client */
+        const genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-2.0-flash",
+            systemInstruction: "You are a senior software engineer and code review expert. Analyze pull requests thoroughly and provide accurate scoring based on design patterns, code quality, and priority. Always respond with valid JSON only.",
+            generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 1500,
+            },
+        });
         /* 2️⃣ Fetch repository context for design patterns */
         const repoContext = await fetchRepositoryContext(owner, repo);
         console.log("📋 Repository context:", JSON.stringify(repoContext, null, 2));
@@ -27,7 +41,7 @@ const handleIssueAnalysis = async (req, res) => {
             res.status(200).json({
                 message: "No PRs connected to this issue",
                 issueNumber,
-                totalPRs: 0
+                totalPRs: 0,
             });
             return;
         }
@@ -38,7 +52,7 @@ const handleIssueAnalysis = async (req, res) => {
             console.log(`\n🤖 AI analyzing PR #${pr.number}: "${pr.title}"`);
             try {
                 const diff = await fetchPRDiff(owner, repo, pr.number);
-                const aiAnalysis = await analyzeWithOpenAI(openai, pr, diff, repoContext);
+                const aiAnalysis = await analyzeWithGemini(model, pr, diff, repoContext);
                 const analysis = {
                     prNumber: pr.number,
                     title: pr.title,
@@ -46,7 +60,10 @@ const handleIssueAnalysis = async (req, res) => {
                     createdAt: pr.created_at,
                     state: pr.state,
                     aiAnalysis,
-                    overallScore: Math.round((aiAnalysis.designPatternScore + aiAnalysis.codeQualityScore + aiAnalysis.priorityScore) / 3)
+                    overallScore: Math.round((aiAnalysis.designPatternScore +
+                        aiAnalysis.codeQualityScore +
+                        aiAnalysis.priorityScore) /
+                        3),
                 };
                 prAnalyses.push(analysis);
                 console.log(`✅ Completed AI analysis for PR #${pr.number} (Overall Score: ${analysis.overallScore})`);
@@ -69,7 +86,7 @@ const handleIssueAnalysis = async (req, res) => {
             ...analysisResult,
             repositoryContext: repoContext,
             labelsAppliedToPRs: addLabelsToPRs,
-            message: `Successfully analyzed ${prAnalyses.length} PRs for issue #${issueNumber} using AI`
+            message: `Successfully analyzed ${prAnalyses.length} PRs for issue #${issueNumber} using AI`,
         };
         console.log("🎯 AI Analysis complete");
         res.status(200).json(response);
@@ -111,10 +128,22 @@ async function fetchRepositoryContext(owner, repo) {
             });
             if (packageResponse.ok) {
                 const packageData = await packageResponse.json();
-                const packageContent = JSON.parse(Buffer.from(packageData.content, 'base64').toString());
+                const packageContent = JSON.parse(Buffer.from(packageData.content, "base64").toString());
                 // Extract frameworks from dependencies
-                const deps = { ...packageContent.dependencies, ...packageContent.devDependencies };
-                frameworks = Object.keys(deps).filter(dep => ['react', 'angular', 'vue', 'express', 'fastify', 'next', 'nuxt', 'nest'].some(framework => dep.toLowerCase().includes(framework)));
+                const deps = {
+                    ...packageContent.dependencies,
+                    ...packageContent.devDependencies,
+                };
+                frameworks = Object.keys(deps).filter((dep) => [
+                    "react",
+                    "angular",
+                    "vue",
+                    "express",
+                    "fastify",
+                    "next",
+                    "nuxt",
+                    "nest",
+                ].some((framework) => dep.toLowerCase().includes(framework)));
             }
         }
         catch (error) {
@@ -124,74 +153,74 @@ async function fetchRepositoryContext(owner, repo) {
             designPatterns: inferDesignPatterns(repoData.language, frameworks),
             codeQualityStandards: inferQualityStandards(repoData.language),
             architectureStyle: inferArchitectureStyle(frameworks),
-            primaryLanguage: repoData.language || 'Unknown',
-            frameworks
+            primaryLanguage: repoData.language || "Unknown",
+            frameworks,
         };
     }
     catch (error) {
         console.error("⚠️ Failed to fetch full repository context:", error.message);
         // Return basic context as fallback
         return {
-            designPatterns: ['MVC', 'Repository', 'Factory'],
-            codeQualityStandards: ['Clean Code', 'SOLID Principles'],
-            architectureStyle: 'Modular',
-            primaryLanguage: 'Unknown',
-            frameworks: []
+            designPatterns: ["MVC", "Repository", "Factory"],
+            codeQualityStandards: ["Clean Code", "SOLID Principles"],
+            architectureStyle: "Modular",
+            primaryLanguage: "Unknown",
+            frameworks: [],
         };
     }
 }
 /* 🧠 Infer likely design patterns based on language and frameworks */
 function inferDesignPatterns(language, frameworks) {
-    const patterns = ['Repository', 'Factory', 'Observer'];
-    if (language === 'JavaScript' || language === 'TypeScript') {
-        patterns.push('Module', 'Singleton', 'Strategy');
-        if (frameworks.some(f => f.includes('react'))) {
-            patterns.push('Component', 'HOC', 'Render Props', 'Custom Hooks');
+    const patterns = ["Repository", "Factory", "Observer"];
+    if (language === "JavaScript" || language === "TypeScript") {
+        patterns.push("Module", "Singleton", "Strategy");
+        if (frameworks.some((f) => f.includes("react"))) {
+            patterns.push("Component", "HOC", "Render Props", "Custom Hooks");
         }
-        if (frameworks.some(f => f.includes('express'))) {
-            patterns.push('MVC', 'Middleware', 'Router');
+        if (frameworks.some((f) => f.includes("express"))) {
+            patterns.push("MVC", "Middleware", "Router");
         }
     }
-    if (language === 'Java') {
-        patterns.push('MVC', 'DAO', 'Builder', 'Adapter');
+    if (language === "Java") {
+        patterns.push("MVC", "DAO", "Builder", "Adapter");
     }
-    if (language === 'Python') {
-        patterns.push('Django MVT', 'Decorator', 'Context Manager');
+    if (language === "Python") {
+        patterns.push("Django MVT", "Decorator", "Context Manager");
     }
     return patterns;
 }
 function inferQualityStandards(language) {
-    const standards = ['Clean Code', 'SOLID Principles', 'DRY'];
-    if (language === 'JavaScript' || language === 'TypeScript') {
-        standards.push('ESLint Standards', 'Type Safety', 'Modern ES6+');
+    const standards = ["Clean Code", "SOLID Principles", "DRY"];
+    if (language === "JavaScript" || language === "TypeScript") {
+        standards.push("ESLint Standards", "Type Safety", "Modern ES6+");
     }
     return standards;
 }
 function inferArchitectureStyle(frameworks) {
-    if (frameworks.some(f => f.includes('micro')))
-        return 'Microservices';
-    if (frameworks.some(f => f.includes('react') || f.includes('vue')))
-        return 'Component-Based';
-    if (frameworks.some(f => f.includes('express')))
-        return 'RESTful API';
-    return 'Modular Monolith';
+    if (frameworks.some((f) => f.includes("micro")))
+        return "Microservices";
+    if (frameworks.some((f) => f.includes("react") || f.includes("vue")))
+        return "Component-Based";
+    if (frameworks.some((f) => f.includes("express")))
+        return "RESTful API";
+    return "Modular Monolith";
 }
-/* 🤖 Analyze PR using OpenAI with comprehensive prompt */
-async function analyzeWithOpenAI(openai, pr, diff, repoContext) {
+/* 🤖 Analyze PR using Gemini with comprehensive prompt */
+async function analyzeWithGemini(model, pr, diff, repoContext) {
     const analysisPrompt = `# Comprehensive Pull Request Analysis
 
 ## Repository Context
 - **Primary Language**: ${repoContext.primaryLanguage}
 - **Architecture Style**: ${repoContext.architectureStyle}
-- **Expected Design Patterns**: ${repoContext.designPatterns.join(', ')}
-- **Code Quality Standards**: ${repoContext.codeQualityStandards.join(', ')}
-- **Frameworks Used**: ${repoContext.frameworks.join(', ') || 'None specified'}
+- **Expected Design Patterns**: ${repoContext.designPatterns.join(", ")}
+- **Code Quality Standards**: ${repoContext.codeQualityStandards.join(", ")}
+- **Frameworks Used**: ${repoContext.frameworks.join(", ") || "None specified"}
 
 ## Pull Request Details
 - **Title**: ${pr.title}
 - **Author**: ${pr.user.login}
 - **State**: ${pr.state}
-- **Description**: ${pr.body || 'No description provided'}
+- **Description**: ${pr.body || "No description provided"}
 
 ## Code Changes
 \`\`\`diff
@@ -251,52 +280,41 @@ Respond with ONLY a valid JSON object in this exact format:
 
 Focus on providing accurate, actionable feedback that will help improve code quality and maintainability.`;
     try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-                {
-                    role: "system",
-                    content: "You are a senior software engineer and code review expert. Analyze pull requests thoroughly and provide accurate scoring based on design patterns, code quality, and priority. Always respond with valid JSON only."
-                },
-                {
-                    role: "user",
-                    content: analysisPrompt
-                }
-            ],
-            temperature: 0.1, // Low temperature for consistent analysis
-            max_tokens: 1500,
-        });
-        const response = completion.choices[0]?.message?.content?.trim() || '{}';
-        console.log(`🤖 OpenAI response for PR #${pr.number}:`, response.substring(0, 200) + "...");
-        // Clean response if needed (remove markdown)
-        let cleanedResponse = response;
-        if (cleanedResponse.startsWith('```json')) {
-            cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-        }
+        const result = await model.generateContent(analysisPrompt);
+        const response = result.response.text().trim();
+        console.log(`🤖 Gemini response for PR #${pr.number}:`, response.substring(0, 200) + "...");
+        // Clean response using utility function
+        const cleanedResponse = (0, gemini_1.cleanJsonResponse)(response);
         const parsed = JSON.parse(cleanedResponse);
         // Validate required fields
-        const result = {
+        const analysisResult = {
             designPatternScore: Math.max(0, Math.min(100, parsed.designPatternScore || 0)),
             codeQualityScore: Math.max(0, Math.min(100, parsed.codeQualityScore || 0)),
             priorityScore: Math.max(0, Math.min(100, parsed.priorityScore || 0)),
             designPatternFollowed: parsed.designPatternFollowed || false,
-            analysisReason: parsed.analysisReason || 'Analysis completed',
-            recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
-            detailedAnalysis: parsed.detailedAnalysis || 'Detailed analysis not available'
+            analysisReason: parsed.analysisReason || "Analysis completed",
+            recommendations: Array.isArray(parsed.recommendations)
+                ? parsed.recommendations
+                : [],
+            detailedAnalysis: parsed.detailedAnalysis || "Detailed analysis not available",
         };
-        return result;
+        return analysisResult;
     }
     catch (error) {
-        console.error(`❌ OpenAI analysis failed for PR #${pr.number}:`, error.message);
+        console.error(`❌ Gemini analysis failed for PR #${pr.number}:`, error.message);
         // Return default analysis on failure
         return {
             designPatternScore: 50,
             codeQualityScore: 50,
             priorityScore: 50,
             designPatternFollowed: false,
-            analysisReason: 'Analysis failed - manual review required',
-            recommendations: ['Manual code review needed', 'Check for compilation errors', 'Verify functionality'],
-            detailedAnalysis: 'Automated analysis could not be completed due to technical issues.'
+            analysisReason: "Analysis failed - manual review required",
+            recommendations: [
+                "Manual code review needed",
+                "Check for compilation errors",
+                "Verify functionality",
+            ],
+            detailedAnalysis: "Automated analysis could not be completed due to technical issues.",
         };
     }
 }
@@ -306,47 +324,47 @@ function calculateIssueMetrics(issueNumber, prAnalyses) {
     const sortedPRs = [...prAnalyses].sort((a, b) => b.overallScore - a.overallScore);
     // Assign priorities based on AI scoring
     const priorityAssignments = {
-        priority1: sortedPRs.slice(0, 1).map(pr => pr.prNumber),
-        priority2: sortedPRs.slice(1, 2).map(pr => pr.prNumber),
-        priority3: sortedPRs.slice(2, 3).map(pr => pr.prNumber),
-        priority4: sortedPRs.slice(3).map(pr => pr.prNumber)
+        priority1: sortedPRs.slice(0, 1).map((pr) => pr.prNumber),
+        priority2: sortedPRs.slice(1, 2).map((pr) => pr.prNumber),
+        priority3: sortedPRs.slice(2, 3).map((pr) => pr.prNumber),
+        priority4: sortedPRs.slice(3).map((pr) => pr.prNumber),
     };
     // Determine design pattern compliance based on AI analysis
-    const followedCount = prAnalyses.filter(pr => pr.aiAnalysis.designPatternFollowed).length;
+    const followedCount = prAnalyses.filter((pr) => pr.aiAnalysis.designPatternFollowed).length;
     const totalCount = prAnalyses.length;
     let designPatternCompliance;
     const compliancePercentage = (followedCount / totalCount) * 100;
     if (compliancePercentage >= 70) {
-        designPatternCompliance = 'followed';
+        designPatternCompliance = "followed";
     }
     else {
-        designPatternCompliance = 'not_followed';
+        designPatternCompliance = "not_followed";
     }
     // Calculate overall issue priority based on highest scoring PR
     const highestScore = sortedPRs.length > 0 ? sortedPRs[0].overallScore : 0;
     let issuePriority;
     if (highestScore >= 80) {
-        issuePriority = 'Priority-1';
+        issuePriority = "Priority-1";
     }
     else if (highestScore >= 60) {
-        issuePriority = 'Priority-2';
+        issuePriority = "Priority-2";
     }
     else if (highestScore >= 40) {
-        issuePriority = 'Priority-3';
+        issuePriority = "Priority-3";
     }
     else {
-        issuePriority = 'Priority-4';
+        issuePriority = "Priority-4";
     }
     // Generate recommended labels for the ISSUE (only ONE priority label)
     const recommendedLabels = [];
     // Add single priority label for the issue
     recommendedLabels.push(issuePriority);
     // Add design pattern compliance
-    if (designPatternCompliance === 'followed') {
-        recommendedLabels.push('Design Pattern Followed');
+    if (designPatternCompliance === "followed") {
+        recommendedLabels.push("Design Pattern Followed");
     }
     else {
-        recommendedLabels.push('Design Pattern Not Followed');
+        recommendedLabels.push("Design Pattern Not Followed");
     }
     return {
         issueNumber,
@@ -360,9 +378,10 @@ function calculateIssueMetrics(issueNumber, prAnalyses) {
         aiInsights: {
             averageDesignPatternScore: Math.round(prAnalyses.reduce((sum, pr) => sum + pr.aiAnalysis.designPatternScore, 0) / prAnalyses.length),
             averageCodeQualityScore: Math.round(prAnalyses.reduce((sum, pr) => sum + pr.aiAnalysis.codeQualityScore, 0) / prAnalyses.length),
-            averagePriorityScore: Math.round(prAnalyses.reduce((sum, pr) => sum + pr.aiAnalysis.priorityScore, 0) / prAnalyses.length),
-            highestPRScore: highestScore
-        }
+            averagePriorityScore: Math.round(prAnalyses.reduce((sum, pr) => sum + pr.aiAnalysis.priorityScore, 0) /
+                prAnalyses.length),
+            highestPRScore: highestScore,
+        },
     };
 }
 // Previous helper functions remain the same...
@@ -386,7 +405,8 @@ async function fetchConnectedPRs(owner, repo, issueNumber) {
     const searchResults = await response.json();
     const connectedPRs = [];
     for (const item of searchResults.items) {
-        if (item.pull_request && referencesIssue(item.title + ' ' + (item.body || ''), issueNumber)) {
+        if (item.pull_request &&
+            referencesIssue(item.title + " " + (item.body || ""), issueNumber)) {
             const prUrl = `https://api.github.com/repos/${owner}/${repo}/pulls/${item.number}`;
             const prResponse = await fetch(prUrl, {
                 headers: {
@@ -404,13 +424,13 @@ async function fetchConnectedPRs(owner, repo, issueNumber) {
 }
 function referencesIssue(text, issueNumber) {
     const patterns = [
-        new RegExp(`(?:fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)\\s+#${issueNumber}`, 'i'),
-        new RegExp(`(?:relates?|related)\\s+(?:to\\s+)?#${issueNumber}`, 'i'),
-        new RegExp(`(?:addresses?|addressing)\\s+#${issueNumber}`, 'i'),
-        new RegExp(`issue\\s*#${issueNumber}`, 'i'),
-        new RegExp(`#${issueNumber}(?!\\d)`, 'g')
+        new RegExp(`(?:fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)\\s+#${issueNumber}`, "i"),
+        new RegExp(`(?:relates?|related)\\s+(?:to\\s+)?#${issueNumber}`, "i"),
+        new RegExp(`(?:addresses?|addressing)\\s+#${issueNumber}`, "i"),
+        new RegExp(`issue\\s*#${issueNumber}`, "i"),
+        new RegExp(`#${issueNumber}(?!\\d)`, "g"),
     ];
-    return patterns.some(pattern => pattern.test(text));
+    return patterns.some((pattern) => pattern.test(text));
 }
 async function fetchPRDiff(owner, repo, prNumber) {
     const token = process.env.GITHUB_COMMENT_TOKEN;
@@ -447,9 +467,9 @@ async function applyLabelsToIssue(owner, repo, issueNumber, labels) {
     }
     const currentLabels = await currentResponse.json();
     const currentLabelNames = currentLabels.map((label) => label.name);
-    const labelsToRemove = currentLabelNames.filter((name) => name.startsWith('Priority-') ||
-        name === 'Design Pattern Followed' ||
-        name === 'Design Pattern Not Followed');
+    const labelsToRemove = currentLabelNames.filter((name) => name.startsWith("Priority-") ||
+        name === "Design Pattern Followed" ||
+        name === "Design Pattern Not Followed");
     const otherLabels = currentLabelNames.filter((name) => !labelsToRemove.includes(name));
     const updatedLabels = [...otherLabels, ...labels];
     const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/labels`;
@@ -481,22 +501,22 @@ async function applyPriorityLabelsToPRs(owner, repo, priorityAssignments, prAnal
     priorityAssignments.priority1.forEach((prNum) => {
         if (!prLabelMap.has(prNum))
             prLabelMap.set(prNum, []);
-        prLabelMap.get(prNum).push('Priority-1');
+        prLabelMap.get(prNum).push("Priority-1");
     });
     priorityAssignments.priority2.forEach((prNum) => {
         if (!prLabelMap.has(prNum))
             prLabelMap.set(prNum, []);
-        prLabelMap.get(prNum).push('Priority-2');
+        prLabelMap.get(prNum).push("Priority-2");
     });
     priorityAssignments.priority3.forEach((prNum) => {
         if (!prLabelMap.has(prNum))
             prLabelMap.set(prNum, []);
-        prLabelMap.get(prNum).push('Priority-3');
+        prLabelMap.get(prNum).push("Priority-3");
     });
     priorityAssignments.priority4.forEach((prNum) => {
         if (!prLabelMap.has(prNum))
             prLabelMap.set(prNum, []);
-        prLabelMap.get(prNum).push('Priority-4');
+        prLabelMap.get(prNum).push("Priority-4");
     });
     // Add design pattern compliance labels to each PR
     for (const analysis of prAnalyses) {
@@ -504,10 +524,10 @@ async function applyPriorityLabelsToPRs(owner, repo, priorityAssignments, prAnal
             prLabelMap.set(analysis.prNumber, []);
         }
         if (analysis.aiAnalysis.designPatternFollowed) {
-            prLabelMap.get(analysis.prNumber).push('Design Pattern Followed');
+            prLabelMap.get(analysis.prNumber).push("Design Pattern Followed");
         }
         else {
-            prLabelMap.get(analysis.prNumber).push('Design Pattern Not Followed');
+            prLabelMap.get(analysis.prNumber).push("Design Pattern Not Followed");
         }
     }
     // Apply labels to each PR
@@ -529,9 +549,9 @@ async function applyPriorityLabelsToPRs(owner, repo, priorityAssignments, prAnal
             const currentLabels = await currentResponse.json();
             const currentLabelNames = currentLabels.map((label) => label.name);
             // Remove old priority and design pattern labels
-            const labelsToRemove = currentLabelNames.filter((name) => name.startsWith('Priority-') ||
-                name === 'Design Pattern Followed' ||
-                name === 'Design Pattern Not Followed');
+            const labelsToRemove = currentLabelNames.filter((name) => name.startsWith("Priority-") ||
+                name === "Design Pattern Followed" ||
+                name === "Design Pattern Not Followed");
             const otherLabels = currentLabelNames.filter((name) => !labelsToRemove.includes(name));
             // Combine with new labels
             const updatedLabels = [...otherLabels, ...labelsToAdd];
@@ -551,9 +571,9 @@ async function applyPriorityLabelsToPRs(owner, repo, priorityAssignments, prAnal
                 console.error(`❌ Failed to apply labels to PR #${prNumber}: ${response.status} ${response.statusText} - ${errorText}`);
                 continue;
             }
-            console.log(`✅ Successfully applied labels to PR #${prNumber}: ${labelsToAdd.join(', ')}`);
+            console.log(`✅ Successfully applied labels to PR #${prNumber}: ${labelsToAdd.join(", ")}`);
             // Small delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 100));
         }
         catch (error) {
             console.error(`❌ Error applying labels to PR #${prNumber}:`, error.message);
