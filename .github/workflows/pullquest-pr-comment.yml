@@ -1,0 +1,59 @@
+# .github/workflows/pullquest-pr-comment.yml
+name: PullQuest – comment on PR activity
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    branches: [main]
+
+jobs:
+  notify-pullquest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # needed only if you later update the PR status
+
+    env:
+      BACKEND_URL: https://innerve-x-github-workflow-be-xi.vercel.app
+
+    steps:
+      - name: Debug – print event info
+        run: |
+          echo "🔍 PR #      : ${{ github.event.pull_request.number }}"
+          echo "🔍 Title     : ${{ github.event.pull_request.title }}"
+          echo "🔍 Author    : ${{ github.event.pull_request.user.login }}"
+          echo "🔍 Event     : ${{ github.event.action }}"
+          echo "🔍 Repo      : ${{ github.event.repository.full_name }}"
+
+      - name: Build payload ➜ POST to backend
+        run: |
+          NUMBER=${{ github.event.pull_request.number }}
+          AUTHOR=${{ github.event.pull_request.user.login }}
+          DESCRIPTION="${{ github.event.pull_request.body || '' }}"
+
+          # JSON array of label names
+          LABELS=$(jq '.pull_request.labels | map(.name)' "$GITHUB_EVENT_PATH")
+
+          # Assemble payload
+          payload=$(jq -n \
+            --arg owner  "${{ github.event.repository.owner.login }}" \
+            --arg repo   "${{ github.event.repository.name }}" \
+            --arg author "$AUTHOR" \
+            --arg desc   "$DESCRIPTION" \
+            --argjson prNumber "$NUMBER" \
+            --argjson labels   "$LABELS" \
+            '{owner:$owner, repo:$repo, prNumber:$prNumber, author:$author, description:$desc, labels:$labels}')
+
+          echo "📦 Payload:"
+          echo "$payload"
+
+          response=$(curl --fail --show-error --silent \
+            -X POST "$BACKEND_URL/api/comment/PullRequest" \
+            -H "Content-Type: application/json" \
+            --data-raw "$payload" \
+            -w '\nHTTP %{http_code}\n' )
+
+          echo "🔍 Response: $response"
+
+      - name: Done
+        run: echo "✅ PullQuest backend notified"

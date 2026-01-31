@@ -1,0 +1,48 @@
+name: 🎯 Comprehensive Issue Analysis
+
+# Trigger when we want to analyze an issue and all its connected PRs
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to analyze"
+        required: true
+        type: string
+      add_labels_to_prs:
+        description: "Also add priority labels to individual PRs"
+        required: false
+        type: boolean
+        default: true
+
+  # Or trigger automatically when an issue is opened or updated
+  issues:
+    types: [opened, reopened, edited]
+
+jobs:
+  analyze-issue:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🎯 Analyze Issue and Connected PRs
+        run: |
+          # Use input issue number or the closed issue number
+          ISSUE_NUMBER="${{ github.event.inputs.issue_number || github.event.issue.number }}"
+          ADD_LABELS_TO_PRS="${{ github.event.inputs.add_labels_to_prs || 'true' }}"
+
+          echo "🚀 Starting comprehensive analysis for issue #$ISSUE_NUMBER"
+          echo "🏷️ Add labels to PRs: $ADD_LABELS_TO_PRS"
+
+          curl -X POST "https://innerve-x-github-workflow-be-xi.vercel.app/api/github/analyze-issue" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"owner\": \"${{ github.repository_owner }}\",
+              \"repo\": \"${{ github.event.repository.name }}\",
+              \"issueNumber\": $ISSUE_NUMBER,
+              \"addLabelsToPRs\": $ADD_LABELS_TO_PRS
+            }"
+
+      - name: 📋 Analysis Complete
+        run: |
+          echo "✅ Issue analysis completed for #${{ github.event.inputs.issue_number || github.event.issue.number }}"
+          echo "🏷️ Labels have been automatically applied based on AI analysis"
+          echo "🎯 Priority labels assigned based on AI scoring"

@@ -1,0 +1,53 @@
+# .github/workflows/pullquest-auto-comment.yml
+name: PullQuest – comment on new issues/PRs
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  notify-pullquest:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    env:
+      BACKEND_URL: https://innerve-x-github-workflow-be-xi.vercel.app
+
+    steps:
+      - name: Show context
+        run: |
+          echo "🔍 Repo:   ${{ github.event.repository.full_name }}"
+          echo "🔍 Owner:  ${{ github.event.repository.owner.login }}"
+          echo "🔍 Num:    ${{ github.event.issue.number || github.event.pull_request.number }}"
+          echo "🔍 Labels: $(jq -r '(.issue.labels // .pull_request.labels) | map(.name) | join(", ")' "$GITHUB_EVENT_PATH")"
+
+      - name: Build payload & notify backend
+        run: |
+          # numeric issue / PR number
+          NUMBER=${{ github.event.issue.number || github.event.pull_request.number }}
+
+          # JSON array of label names: ["bug","frontend",…]
+          LABELS=$(jq '(.issue.labels // .pull_request.labels) | map(.name)' "$GITHUB_EVENT_PATH")
+
+          # Build final payload: { owner, repo, issueNumber, labels, title, description }
+          payload=$(jq -n \
+            --arg owner  "${{ github.event.repository.owner.login }}" \
+            --arg repo   "${{ github.event.repository.name }}" \
+            --argjson num     "$NUMBER" \
+            --argjson labels  "$LABELS" \
+            --arg title  "${{ github.event.issue.title }}" \
+            --arg desc   "${{ github.event.issue.body || '' }}" \
+            '{owner:$owner, repo:$repo, issueNumber:$num, labels:$labels, title:$title, description:$desc}')
+
+          echo "📦 Payload:"
+          echo "$payload"
+
+          curl --silent --show-error \
+               -X POST "$BACKEND_URL/api/comment/issues" \
+               -H "Content-Type: application/json" \
+               --data-raw "$payload"
+
+      - name: Done
+        run: echo "✅ PullQuest notified successfully"

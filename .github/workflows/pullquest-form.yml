@@ -1,0 +1,64 @@
+name: PullQuestAI XP Trigger
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  handle-xp-request:
+    # Only run on pull request comments
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    env:
+      BACKEND_URL: https://innerve-x-github-workflow-be-xi.vercel.app
+
+    steps:
+      - name: Check if comment mentions @pullquestai and requests XP
+        id: check-comment
+        run: |
+          comment_body="${{ github.event.comment.body }}"
+          if [[ "$comment_body" == *"@pullquestai"* ]] && [[ "$comment_body" == *"give me the contributor xp form"* ]]; then
+            echo "trigger_action=true" >> $GITHUB_OUTPUT
+            echo "✅ XP request detected!"
+          else
+            echo "trigger_action=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  Not an XP request, skipping..."
+          fi
+
+      - name: Build payload ➜ POST to backend
+        if: steps.check-comment.outputs.trigger_action == 'true'
+        run: |
+          PR_NUMBER=${{ github.event.issue.number }}
+          COMMENTER="${{ github.event.comment.user.login }}"
+
+          # Assemble minimal payload for commenting
+          payload=$(jq -n \
+            --arg owner        "${{ github.event.repository.owner.login }}" \
+            --arg repo         "${{ github.event.repository.name }}" \
+            --arg commenter    "$COMMENTER" \
+            --argjson prNumber "$PR_NUMBER" \
+            '{
+              owner: $owner,
+              repo: $repo, 
+              prNumber: $prNumber,
+              commenter: $commenter
+            }')
+
+          echo "📦 Payload:"
+          echo "$payload"
+
+          response=$(curl --fail --show-error --silent \
+            -X POST "$BACKEND_URL/api/comment/form" \
+            -H "Content-Type: application/json" \
+            --data-raw "$payload" \
+            -w '\nHTTP %{http_code}\n' )
+
+          echo "🔍 Response: $response"
+
+      - name: Done
+        if: steps.check-comment.outputs.trigger_action == 'true'
+        run: echo "✅ PullQuestAI backend notified for XP calculation"

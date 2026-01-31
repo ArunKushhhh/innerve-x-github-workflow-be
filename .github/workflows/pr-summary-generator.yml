@@ -1,0 +1,62 @@
+# .github/workflows/ai-pr-summary.yml
+name: AI-powered PR Summary
+on:
+  pull_request:
+    types: [opened]
+    branches: [main]
+jobs:
+  ai_summary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      BACKEND_URL: https://innerve-x-github-workflow-be-xi.vercel.app
+    steps:
+      # 1️⃣  Check out the PR branch
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2️⃣  Capture the head commit SHA
+      - name: Capture head commit SHA
+        id: head
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 3️⃣  Compute PR diff
+      - name: Compute PR diff
+        id: diff
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff origin/${{ github.event.pull_request.base.ref }}...${{ steps.head.outputs.sha }} > diff.txt
+
+      # 4️⃣  Send to backend for AI summary
+      - name: Send to backend for AI summary
+        run: |
+          payload=$(jq -n \
+            --arg owner   "${{ github.repository_owner }}" \
+            --arg repo    "${{ github.event.repository.name }}" \
+            --argjson prNumber "${{ github.event.pull_request.number }}" \
+            --arg title   "${{ github.event.pull_request.title }}" \
+            --arg description "${{ github.event.pull_request.body }}" \
+            --arg author  "${{ github.event.pull_request.user.login }}" \
+            --rawfile diff diff.txt \
+            '{ owner:$owner,
+               repo:$repo,
+               prNumber:$prNumber,
+               title:$title,
+               description:$description,
+               author:$author,
+               diff:$diff }')
+
+          echo "📦 Sending PR summary request..."
+          curl --fail --silent --show-error \
+               -X POST "$BACKEND_URL/api/github/generate-pr-summary" \
+               -H "Content-Type: application/json" \
+               --data-binary "$payload"
+
+      - name: Done
+        if: success()
+        run: echo "🎉 AI summary generated and posted to PR."
